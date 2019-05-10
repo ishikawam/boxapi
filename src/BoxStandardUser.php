@@ -5,6 +5,7 @@ namespace Maengkom\Box;
 class BoxStandardUser {
 
 	use BoxContent;
+	use BoxUser;
 
     /**
      * Config
@@ -19,8 +20,6 @@ class BoxStandardUser {
 
 	private $token	= array();
 
-	protected $refresh_token	= '';
-	protected $access_token	= '';
 	protected $auth_header	= '';
 
 	// These urls below used for Box Content API
@@ -68,23 +67,39 @@ class BoxStandardUser {
 	 * @param string $code
 	 * @return array
 	 */
-	public function getToken($code = null)
+	public function getTokenByRefreshToken($refreshToken)
 	{
-		if (! empty($this->refresh_token)) {
-			$querystring = http_build_query(array(
-				'grant_type' 	=> 'refresh_token',
-				'refresh_token' => $this->refresh_token,
-				'client_id' 	=> $this->config['su_client_id'],
-				'client_secret' => $this->config['su_client_secret']));
-		} else {
-			$querystring = http_build_query(array(
-				'grant_type' 	=> 'authorization_code',
-				'code' 			=> $code,
-				'client_id' 	=> $this->config['su_client_id'],
-				'client_secret' => $this->config['su_client_secret']));
-		}
+		$querystring = http_build_query(array(
+			'grant_type' 	=> 'refresh_token',
+			'refresh_token' => $refreshToken,
+			'client_id' 	=> $this->config['su_client_id'],
+			'client_secret' => $this->config['su_client_secret']));
 
-		return json_decode(shell_exec(sprintf('curl %s -d "%s" -X POST', $this->token_url, $querystring)), true);
+		$token = json_decode(shell_exec(sprintf('curl %s -d "%s" -X POST', $this->token_url, $querystring)), true);
+		// add timestamp
+		$token['timestamp'] = time();
+
+		return $token;
+	}
+
+	/*
+	 * Second step for authentication [Gets the access_token and the refresh_token]
+	 * @param string $code
+	 * @return array
+	 */
+	public function getToken($code)
+	{
+		$querystring = http_build_query(array(
+			'grant_type' 	=> 'authorization_code',
+			'code' 			=> $code,
+			'client_id' 	=> $this->config['su_client_id'],
+			'client_secret' => $this->config['su_client_secret']));
+
+		$token = json_decode(shell_exec(sprintf('curl %s -d "%s" -X POST', $this->token_url, $querystring)), true);
+		// add timestamp
+		$token['timestamp'] = time();
+
+		return $token;
 	}
 
 	/* Saves the token */
@@ -101,7 +116,7 @@ class BoxStandardUser {
 
 		$this->token = $token;
 
-		$this->auth_header = sprintf('-H "Authorization: Bearer %s"', $this->access_token);
+		$this->auth_header = sprintf('-H "Authorization: Bearer %s"', $token['access_token']);
 
 		return true;
 	}
@@ -110,6 +125,7 @@ class BoxStandardUser {
 	 * Loads the token
 	 * tokenからaccess_token, refresh_tokenをセットする。
 	 * もし期限切れていたらrefresh_tokenからtokenを再取得する。
+	 * これloadTokenじゃない。有効期限切れてたらtoken取り直してsetTokenするfunction。 @todo;
 	 * @return bool
 	 */
 	public function loadToken()
@@ -126,19 +142,14 @@ class BoxStandardUser {
 
 		// ここで判定すべきじゃない。自前timestamp撤廃したい。
 		if ($this->expired($token['expires_in'], $token['timestamp'])) {
-			$this->refresh_token = $token['refresh_token'];
-			$token = $this->getToken();
+			$token = $this->getTokenByRefreshToken($token['refresh_token']);
 			if ($this->setToken($token)) {
-				$this->refresh_token = $token['refresh_token'];
-				$this->access_token = $token['access_token'];
 				$this->token = $token;
 				return true;
 			}
 			return false;
 		}
 
-		$this->refresh_token = $token['refresh_token'];
-		$this->access_token = $token['access_token'];
 		return true;
 	}
 
