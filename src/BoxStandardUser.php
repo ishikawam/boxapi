@@ -142,6 +142,7 @@ class BoxStandardUser {
 
 		// ここで判定すべきじゃない。自前timestamp撤廃したい。
 		if ($this->expired($token['expires_in'], $token['timestamp'])) {
+			// うまくいっていない気がする。 @todo;
 			$token = $this->getTokenByRefreshToken($token['refresh_token']);
 			if ($this->setToken($token)) {
 				$this->token = $token;

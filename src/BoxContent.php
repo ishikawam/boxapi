@@ -18,8 +18,11 @@ trait BoxContent {
 	}
 
 	/* Get the list of items in the mentioned folder */
-	public function getFolderItems($folder_id, $json = false) {
+	public function getFolderItems($folder_id, $json = false, $option = null) {
 		$url = $this->api_url . "/folders/$folder_id/items";
+		if ($option) {
+			$url .= '?' . http_build_query($option, '', '\&');
+		}
 		return $this->get($url, $json);
 	}
 
