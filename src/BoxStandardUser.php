@@ -18,7 +18,7 @@ class BoxStandardUser {
         'redirect_uri'		=> '',
     );
 
-	private $token	= array();
+	private $token	= array();  // @todo; errorの場合には記録しないようにする＝記録時にだけerrorのチェックをする
 
 	protected $auth_header	= '';
 
@@ -30,6 +30,8 @@ class BoxStandardUser {
 
 	// This url below used for get App User access_token in JWT
 	protected $audience_url 	= 'https://api.box.com/oauth2/token';
+
+	protected $is_refreshed = false;
 
 	/**
 	 * @param array $config
@@ -67,7 +69,7 @@ class BoxStandardUser {
 	 * @param string $code
 	 * @return array
 	 */
-	public function getTokenByRefreshToken($refreshToken)
+	private function getTokenByRefreshToken($refreshToken)
 	{
 		$querystring = http_build_query(array(
 			'grant_type' 	=> 'refresh_token',
@@ -75,7 +77,11 @@ class BoxStandardUser {
 			'client_id' 	=> $this->config['su_client_id'],
 			'client_secret' => $this->config['su_client_secret']));
 
+// うまくいってない気がするので
+\Log::error(sprintf('curl %s -d "%s" -X POST', $this->token_url, $querystring));
+
 		$token = json_decode(shell_exec(sprintf('curl %s -d "%s" -X POST', $this->token_url, $querystring)), true);
+\Log::error($token);
 		// add timestamp
 		$token['timestamp'] = time();
 
@@ -87,7 +93,7 @@ class BoxStandardUser {
 	 * @param string $code
 	 * @return array
 	 */
-	public function getToken($code)
+	public function getTokenByCode($code)
 	{
 		$querystring = http_build_query(array(
 			'grant_type' 	=> 'authorization_code',
@@ -102,69 +108,76 @@ class BoxStandardUser {
 		return $token;
 	}
 
+	/*
+	 * @return array
+	 */
+	public function getToken()
+	{
+		return $this->token;
+	}
+
 	/* Saves the token */
 	/**
 	 * @param array $token
-	 * @return bool
+	 * @return array
 	 */
 	public function setToken(array $token)
 	{
+		if (empty($token)) {
+			throw new BoxapiException('token empty');
+		}
+
 		if (isset($token['error'])) {
-			$this->error = $token['error_description'];
-			return false;
+			throw new BoxapiException($token['error_description']);
+		}
+
+		if ($refresh = $this->refreshTokenIfNeed($token)) {
+			$token = $refresh;
+
+			if (empty($token)) {
+				throw new BoxapiException('token empty by refresh');
+			}
+
+			if (isset($token['error'])) {
+				throw new BoxapiException($token['error_description'] . ' by refresh');
+			}
+
+			$this->is_refreshed = true;
 		}
 
 		$this->token = $token;
 
 		$this->auth_header = sprintf('-H "Authorization: Bearer %s"', $token['access_token']);
 
-		return true;
+		return $token;
 	}
 
 	/**
-	 * Loads the token
-	 * tokenからaccess_token, refresh_tokenをセットする。
-	 * もし期限切れていたらrefresh_tokenからtokenを再取得する。
-	 * これloadTokenじゃない。有効期限切れてたらtoken取り直してsetTokenするfunction。 @todo;
-	 * @return bool
+	 * 有効期限切れてたらtoken取り直してsetTokenする
+	 * @return array|null
 	 */
-	public function loadToken()
+	private function refreshTokenIfNeed(array $token)
 	{
-		$token = $this->token;
-		if (empty($token)) {
-			return false;
-		}
-
-		if (isset($token['error'])) {
-			$this->error = $token['error_description'];
-			return false;
-		}
-
-		// ここで判定すべきじゃない。自前timestamp撤廃したい。
 		if ($this->expired($token['expires_in'], $token['timestamp'])) {
-			// うまくいっていない気がする。 @todo;
-			$token = $this->getTokenByRefreshToken($token['refresh_token']);
-			if ($this->setToken($token)) {
-				$this->token = $token;
-				return true;
-			}
-			return false;
+			return $this->getTokenByRefreshToken($token['refresh_token']);
 		}
-
-		return true;
 	}
 
 	/**
+	 * 有効期限切れ判定
 	 * @return bool
 	 */
 	protected function expired($expires_in, $timestamp)
 	{
-		$ctimestamp = time();
-		if (($ctimestamp - $timestamp) >= $expires_in) {
-			return true;
-		} else {
-			return false;
-		}
+		return (time() - $timestamp) >= $expires_in;
 	}
 
+	/**
+	 * refreshTokenしたかどうか
+	 * @return bool
+	 */
+	public function isRefreshed()
+	{
+		return $this->is_refreshed;
+	}
 }
