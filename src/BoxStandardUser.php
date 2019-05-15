@@ -135,11 +135,11 @@ class BoxStandardUser {
 			$token = $refresh;
 
 			if (empty($token)) {
-				throw new BoxapiException('token empty by refresh');
+				throw new BoxapiException('token empty (refreshToken())');
 			}
 
 			if (isset($token['error'])) {
-				throw new BoxapiException($token['error_description'] . ' by refresh');
+				throw new BoxapiException($token['error_description'] . ' (refreshToken())');
 			}
 
 			$this->is_refreshed = true;
