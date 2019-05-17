@@ -77,11 +77,8 @@ class BoxStandardUser {
 			'client_id' 	=> $this->config['su_client_id'],
 			'client_secret' => $this->config['su_client_secret']));
 
-// うまくいってない気がするので
-\Log::error(sprintf('curl %s -d "%s" -X POST', $this->token_url, $querystring));
-
 		$token = json_decode(shell_exec(sprintf('curl %s -d "%s" -X POST', $this->token_url, $querystring)), true);
-\Log::error($token);
+
 		// add timestamp
 		$token['timestamp'] = time();
 
