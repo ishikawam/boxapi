@@ -6,6 +6,7 @@ class BoxStandardUser {
 
 	use BoxContent;
 	use BoxUser;
+	use BoxEvents;
 
     /**
      * Config
