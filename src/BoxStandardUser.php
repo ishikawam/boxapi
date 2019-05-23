@@ -4,6 +4,7 @@ namespace Maengkom\Box;
 
 class BoxStandardUser {
 
+	// Traits
 	use BoxContent;
 	use BoxUser;
 	use BoxEvents;
