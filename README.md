@@ -125,9 +125,22 @@ $config = array(
         'passphrase'		=> '',
         'expiration'		=> 60,
         'private_key_file'	=> 'private_key.pem',
-        
+
+
 $box = new BoxAppUser($config); 		// For App User or
-$box = new BoxStandardUser($config) 	// For Standard User
+$box = new BoxStandardUser($config); 	// For Standard User
+header('Location: ' . $box->getLoginUrl());
+exit();
+
+// after oauth callback
+$box = new BoxStandardUser($config);
+$token = $box->getToken($_GET['code']);
+// save $token to your DB if not error.
+
+// after
+$box->setToken($token);
+$box->loadToken();
+
 ```
 
 Set your private key file out of folder that accessible for internet user.

@@ -4,7 +4,10 @@ namespace Maengkom\Box;
 
 class BoxStandardUser {
 
+	// Traits
 	use BoxContent;
+	use BoxUser;
+	use BoxEvents;
 
     /**
      * Config
@@ -17,8 +20,8 @@ class BoxStandardUser {
         'redirect_uri'		=> '',
     );
 
-	protected $refresh_token	= '';
-	protected $access_token	= '';
+	private $token	= array();  // @todo; errorの場合には記録しないようにする＝記録時にだけerrorのチェックをする
+
 	protected $auth_header	= '';
 
 	// These urls below used for Box Content API
@@ -30,23 +33,14 @@ class BoxStandardUser {
 	// This url below used for get App User access_token in JWT
 	protected $audience_url 	= 'https://api.box.com/oauth2/token';
 
+	protected $is_refreshed = false;
+
+	/**
+	 * @param array $config
+	 */
 	public function __construct(array $config = array())
 	{
 		$this->configure($config);
-
-		if( ! $this->loadToken() ) {
-			if(isset($_GET['code'])){
-				$token = $this->getToken($_GET['code'], true);
-				if($this->writeToken($token, 'file')){
-					$this->loadToken();
-				}
-			} else {
-				$this->getCode();
-			}
-		}
-
-		$this->auth_header 	= "-H \"Authorization: Bearer $this->access_token\"";
-
 	}
 
 	/**
@@ -60,111 +54,129 @@ class BoxStandardUser {
         return $this;
     }
 
-	protected function getCode() {
-
-		$url = $this->authorize_url.'?'.http_build_query(array(
+	/**
+	 * box oauth url
+	 */
+	public function getLoginUrl()
+	{
+		return $this->authorize_url . '?' . http_build_query(array(
 			'response_type'	=> 'code',
 			'client_id'		=> $this->config['su_client_id'],
-			'redirect_uri'	=> $this->config['redirect_uri']
+			'redirect_uri'	=> $this->config['redirect_uri'],
 		));
-
-		header('location: ' . $url);
-		exit();
-
 	}
 
-	/* Second step for authentication [Gets the access_token and the refresh_token] */
-	public function getToken($code = '', $json = false) {
-		$url = $this->token_url;
-		if(!empty($this->refresh_token)){
-			$querystring = http_build_query(array(
-				'grant_type' 	=> 'refresh_token',
-				'refresh_token' => $this->refresh_token,
-				'client_id' 	=> $this->config['su_client_id'],
-				'client_secret' => $this->config['su_client_secret']));
-		} else {
-			$querystring = http_build_query(array(
-				'grant_type' 	=> 'authorization_code',
-				'code' 			=> $code,
-				'client_id' 	=> $this->config['su_client_id'],
-				'client_secret' => $this->config['su_client_secret']));
-		}
+	/*
+	 * Second step for authentication [Gets the access_token and the refresh_token]
+	 * @param string $code
+	 * @return array
+	 */
+	private function getTokenByRefreshToken($refreshToken)
+	{
+		$querystring = http_build_query(array(
+			'grant_type' 	=> 'refresh_token',
+			'refresh_token' => $refreshToken,
+			'client_id' 	=> $this->config['su_client_id'],
+			'client_secret' => $this->config['su_client_secret']));
 
-		if($json){
-			$response = shell_exec("curl $url -d '$querystring' -X POST");
-		} else {
-			$response = json_decode(shell_exec("curl $url -d '$querystring' -X POST"), true);
-		}
+		$token = json_decode(shell_exec(sprintf('curl %s -d "%s" -X POST', $this->token_url, $querystring)), true);
 
-		return $response;
+		// add timestamp
+		$token['timestamp'] = time();
+
+		return $token;
 	}
 
-	/* Reads the token */
-	public function readToken($type = 'file', $json = false) {
-		if($type == 'file' && file_exists(__DIR__.'/token.box')){
-			$fp = fopen(__DIR__.'/token.box', 'r');
-			$content = fread($fp, filesize(__DIR__.'/token.box'));
-			fclose($fp);
-		} else {
-			return false;
-		}
-		if($json){
-			return $content;
-		} else {
-			return json_decode($content, true);
-		}
+	/*
+	 * Second step for authentication [Gets the access_token and the refresh_token]
+	 * @param string $code
+	 * @return array
+	 */
+	public function getTokenByCode($code)
+	{
+		$querystring = http_build_query(array(
+			'grant_type' 	=> 'authorization_code',
+			'code' 			=> $code,
+			'client_id' 	=> $this->config['su_client_id'],
+			'client_secret' => $this->config['su_client_secret']));
+
+		$token = json_decode(shell_exec(sprintf('curl %s -d "%s" -X POST', $this->token_url, $querystring)), true);
+		// add timestamp
+		$token['timestamp'] = time();
+
+		return $token;
+	}
+
+	/*
+	 * @return array
+	 */
+	public function getToken()
+	{
+		return $this->token;
 	}
 
 	/* Saves the token */
-	public function writeToken($token, $type = 'file') {
-		$array = json_decode($token, true);
-		if(isset($array['error'])){
-			$this->error = $array['error_description'];
-			return false;
-		} else {
-			$array['timestamp'] = time();
-			if($type == 'file'){
-				$fp = fopen(__DIR__.'/token.box', 'w');
-				fwrite($fp, json_encode($array));
-				fclose($fp);
+	/**
+	 * @param array $token
+	 * @return array
+	 */
+	public function setToken(array $token)
+	{
+		if (empty($token)) {
+			throw new BoxapiException('token empty');
+		}
+
+		if (isset($token['error'])) {
+			throw new BoxapiException($token['error_description']);
+		}
+
+		if ($refresh = $this->refreshTokenIfNeed($token)) {
+			$token = $refresh;
+
+			if (empty($token)) {
+				throw new BoxapiException('token empty (refreshToken())');
 			}
-			return true;
-		}
-	}
 
-	/* Loads the token */
-	public function loadToken() {
-		$array = $this->readToken('file');
-		if(!$array){
-			return false;
-		} else {
-			if(isset($array['error'])){
-				$this->error = $array['error_description'];
-				return false;
-			} elseif($this->expired($array['expires_in'], $array['timestamp'])){
-				$this->refresh_token = $array['refresh_token'];
-				$token = $this->getToken(NULL, true);
-				if($this->writeToken($token, 'file')){
-					$array = json_decode($token, true);
-					$this->refresh_token = $array['refresh_token'];
-					$this->access_token = $array['access_token'];
-					return true;
-				}
-			} else {
-				$this->refresh_token = $array['refresh_token'];
-				$this->access_token = $array['access_token'];
-				return true;
+			if (isset($token['error'])) {
+				throw new BoxapiException($token['error_description'] . ' (refreshToken())');
 			}
+
+			$this->is_refreshed = true;
+		}
+
+		$this->token = $token;
+
+		$this->auth_header = sprintf('-H "Authorization: Bearer %s"', $token['access_token']);
+
+		return $token;
+	}
+
+	/**
+	 * 有効期限切れてたらtoken取り直してsetTokenする
+	 * @return array|null
+	 */
+	private function refreshTokenIfNeed(array $token)
+	{
+		if ($this->expired($token['expires_in'], $token['timestamp'])) {
+			return $this->getTokenByRefreshToken($token['refresh_token']);
 		}
 	}
 
-	protected function expired($expires_in, $timestamp) {
-		$ctimestamp = time();
-		if(($ctimestamp - $timestamp) >= $expires_in){
-			return true;
-		} else {
-			return false;
-		}
+	/**
+	 * 有効期限切れ判定
+	 * @return bool
+	 */
+	protected function expired($expires_in, $timestamp)
+	{
+		return (time() - $timestamp) >= $expires_in;
 	}
 
+	/**
+	 * refreshTokenしたかどうか
+	 * @return bool
+	 */
+	public function isRefreshed()
+	{
+		return $this->is_refreshed;
+	}
 }
